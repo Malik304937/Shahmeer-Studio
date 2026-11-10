@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Role check against trusted database record
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Category allowlist
+    function isValidCategory(cat) {
+      return cat in [
+        'Logo Design',
+        'T-Shirt Design',
+        'Poster Design',
+        'Social Media Design',
+        'Branding',
+        'Other Designs'
+      ];
+    }
+
+    // Validation helper for Artwork documents
+    function isValidArtwork(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 150
+        && data.description is string && data.description.size() <= 2000
+        && data.category is string && isValidCategory(data.category)
+        && data.imageUrl is string && data.imageUrl.size() >= 5 && data.imageUrl.size() <= 2000
+        && data.uploadDate is string && data.uploadDate.size() <= 64
+        && data.published is bool;
+    }
+
+    // Artwork Collection
+    match /artworks/{artworkId} {
+      // Single get: public can view if published, or admin can view any
+      allow get: if isValidId(artworkId) && (existing().published == true || isAdmin());
+
+      // List query: public can only query where published == true; admin can query all
+      allow list: if resource.data.published == true || isAdmin();
+
+      // Create: restricted to authenticated admin with strict schema validation
+      allow create: if isValidId(artworkId)
+        && isAdmin()
+        && incoming().id == artworkId
+        && isValidArtwork(incoming())
+        && incoming().keys().hasAll(['id', 'title', 'category', 'imageUrl', 'uploadDate', 'published'])
+        && incoming().keys().hasOnly(['id', 'title', 'description', 'category', 'imageUrl', 'uploadDate', 'published', 'createdAt', 'updatedAt']);
+
+      // Update: restricted to authenticated admin
+      allow update: if isValidId(artworkId)
+        && isAdmin()
+        && incoming().id == existing().id // Immutable ID
+        && isValidArtwork(incoming())
+        && incoming().keys().hasOnly(['id', 'title', 'description', 'category', 'imageUrl', 'uploadDate', 'published', 'createdAt', 'updatedAt']);
+
+      // Delete: restricted to authenticated admin
+      allow delete: if isValidId(artworkId) && isAdmin();
+    }
+
+    // Admin whitelist collection
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && request.auth.uid == adminUid;
+      allow list: if isAdmin();
+      allow write: if false; // Provisioned via Firebase Admin SDK / Console
+    }
+  }
+}

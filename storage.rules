@@ -1,0 +1,27 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function isUnderLimit() {
+      return request.resource.size < 25 * 1024 * 1024; // 25MB max
+    }
+
+    // Artwork storage folder
+    match /artworks/{allPaths=**} {
+      // Public read-only access for portfolio artwork display
+      allow read: if true;
+
+      // Only authenticated admin can upload, modify, or delete artwork images
+      allow write: if isSignedIn() && isImage() && isUnderLimit();
+    }
+  }
+}

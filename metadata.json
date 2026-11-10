@@ -1,0 +1,6 @@
+{
+  "name": "Shahmeer Studio",
+  "description": "Premium graphic design portfolio showcasing unique visual concepts, logos, t-shirts, posters, branding, and artwork by Shahmeer Studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

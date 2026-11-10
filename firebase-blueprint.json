@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "Artwork": {
+      "title": "Artwork",
+      "description": "Graphic design artwork, logo, poster, t-shirt, or branding project",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the artwork"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the artwork project",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the design project",
+          "maxLength": 2000
+        },
+        "category": {
+          "type": "string",
+          "description": "Artwork category",
+          "enum": [
+            "Logo Design",
+            "T-Shirt Design",
+            "Poster Design",
+            "Social Media Design",
+            "Branding",
+            "Other Designs"
+          ]
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "URL to the high-resolution artwork image",
+          "maxLength": 2000
+        },
+        "uploadDate": {
+          "type": "string",
+          "description": "ISO timestamp when the artwork was uploaded"
+        },
+        "published": {
+          "type": "boolean",
+          "description": "Whether the artwork is visible on the public gallery"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp in epoch milliseconds"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Last updated timestamp in epoch milliseconds"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "category",
+        "imageUrl",
+        "uploadDate",
+        "published"
+      ]
+    },
+    "AdminProfile": {
+      "title": "AdminProfile",
+      "description": "Record designating an administrator uid",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"]
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": ["uid", "role"]
+    }
+  },
+  "firestore": {
+    "/artworks/{artworkId}": {
+      "schema": "Artwork",
+      "description": "Public and administrative artwork collection"
+    },
+    "/admins/{adminUid}": {
+      "schema": "AdminProfile",
+      "description": "Whitelist of verified admin accounts"
+    }
+  }
+}
