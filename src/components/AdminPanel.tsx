@@ -132,7 +132,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!password.trim()) {
-      setLoginError('Please enter the administrator password');
+      setLoginError('Incorrect administrator credentials.');
       return;
     }
 
@@ -145,9 +145,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (res.success) {
       setIsAuthenticated(true);
       setPassword('');
+      window.history.pushState({}, '', '/admin/dashboard');
       await loadAdminArtworks();
     } else {
-      setLoginError(res.error || 'Access denied. Invalid administrator security key.');
+      setLoginError(res.error || 'Incorrect administrator credentials.');
     }
   };
 
@@ -156,6 +157,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     await adminLogout();
     setIsAuthenticated(false);
     setArtworks([]);
+    window.history.pushState({}, '', '/admin');
     onArtworksChanged();
   };
 

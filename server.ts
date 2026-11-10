@@ -11,7 +11,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+// Port 3000 is required by the environment reverse proxy
+const PORT = 3000;
+
+// Global CORS & preflight middleware for iframes and preview domains
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-token'
+  );
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
 
 // Body parser with 50mb limit for high-res design uploads
 app.use(express.json({ limit: '50mb' }));
@@ -43,13 +59,11 @@ app.use(
 );
 
 // Admin Authentication Setup
-// Password hash helper using SHA-256 with studio salt
 const STUDIO_SALT = process.env.STUDIO_SALT || 'shahmeer_studio_private_salt_2026';
 function hashPassword(pwd: string): string {
   return crypto.createHash('sha256').update(pwd + STUDIO_SALT).digest('hex');
 }
 
-// Get or initialize admin password hash
 interface AdminConfig {
   passwordHash: string;
   updatedAt: number;
@@ -64,7 +78,6 @@ function getAdminConfig(): AdminConfig {
     }
   }
 
-  // Initial config - if env var exists use it, otherwise default
   const initialPassword = process.env.ADMIN_PASSWORD || 'centerofexcellence';
   const initialConfig: AdminConfig = {
     passwordHash: hashPassword(initialPassword),
@@ -166,7 +179,7 @@ function notifyClientsOfUpdate() {
 
 // ======================== API ROUTES ======================== //
 
-// 1. Admin Login (Secure - never exposes credentials)
+// 1. Admin Login (Secure constant-time hash comparison)
 app.post('/api/auth/login', (req: Request, res: Response) => {
   const { password } = req.body;
 
@@ -178,11 +191,19 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   const adminConfig = getAdminConfig();
   const incomingHash = hashPassword(password);
 
-  if (incomingHash !== adminConfig.passwordHash) {
-    // Constant-time like delay to prevent brute-force timing
-    setTimeout(() => {
-      res.status(401).json({ success: false, error: 'Invalid admin credentials' });
-    }, 450);
+  // Constant-time buffer comparison to prevent timing attacks safely
+  const incomingBuf = Buffer.from(incomingHash, 'hex');
+  const expectedBuf = Buffer.from(adminConfig.passwordHash, 'hex');
+
+  const isMatch =
+    incomingBuf.length === expectedBuf.length &&
+    crypto.timingSafeEqual(incomingBuf, expectedBuf);
+
+  if (!isMatch) {
+    res.status(401).json({
+      success: false,
+      error: 'Incorrect administrator credentials.',
+    });
     return;
   }
 
@@ -216,7 +237,13 @@ app.post('/api/auth/change-password', requireAdmin, (req: Request, res: Response
   const adminConfig = getAdminConfig();
   if (currentPassword) {
     const checkHash = hashPassword(currentPassword);
-    if (checkHash !== adminConfig.passwordHash) {
+    const checkBuf = Buffer.from(checkHash, 'hex');
+    const expectedBuf = Buffer.from(adminConfig.passwordHash, 'hex');
+    const isMatch =
+      checkBuf.length === expectedBuf.length &&
+      crypto.timingSafeEqual(checkBuf, expectedBuf);
+
+    if (!isMatch) {
       res.status(401).json({ success: false, error: 'Current password incorrect' });
       return;
     }
@@ -266,8 +293,9 @@ app.get('/api/artworks', (req: Request, res: Response) => {
 // 6. Real-time Live SSE Stream for Public Gallery
 app.get('/api/artworks/stream', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
   // Send initial data immediately
@@ -276,7 +304,18 @@ app.get('/api/artworks/stream', (req: Request, res: Response) => {
 
   sseClients.add(res);
 
+  // Keep-alive heartbeat every 25 seconds
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': keepalive\n\n');
+    } catch {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    }
+  }, 25000);
+
   req.on('close', () => {
+    clearInterval(heartbeat);
     sseClients.delete(res);
   });
 });
@@ -380,7 +419,6 @@ app.post('/api/upload', requireAdmin, (req: Request, res: Response) => {
     return;
   }
 
-  // Parse data URL (e.g. data:image/png;base64,iVBORw0KGgo...)
   const match = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
   if (!match) {
     res.status(400).json({ error: 'Invalid data URL format' });
@@ -412,7 +450,7 @@ app.post('/api/upload', requireAdmin, (req: Request, res: Response) => {
   });
 });
 
-// ======================== VITE INTEGRATION ======================== //
+// ======================== VITE SPA INTEGRATION ======================== //
 
 async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production';

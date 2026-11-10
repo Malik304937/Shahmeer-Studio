@@ -31,6 +31,7 @@ export interface AdminAuthResponse {
   success: boolean;
   token?: string;
   expiresAt?: number;
+  message?: string;
   error?: string;
 }
 

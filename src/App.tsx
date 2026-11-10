@@ -17,7 +17,7 @@ import {
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'portfolio' | 'admin'>(() => {
-    return window.location.pathname === '/admin' ? 'admin' : 'portfolio';
+    return window.location.pathname.startsWith('/admin') ? 'admin' : 'portfolio';
   });
   const [artworks, setArtworks] = useState<Artwork[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -39,6 +39,9 @@ export default function App() {
   const checkAuth = useCallback(async () => {
     const isAuthed = await verifyAdminSession();
     setIsAdminLoggedIn(isAuthed);
+    if (isAuthed && window.location.pathname === '/admin') {
+      window.history.replaceState({}, '', '/admin/dashboard');
+    }
   }, []);
 
   useEffect(() => {
@@ -61,7 +64,7 @@ export default function App() {
   // Handle browser popstate (back/forward button)
   useEffect(() => {
     const handlePopState = () => {
-      if (window.location.pathname === '/admin') {
+      if (window.location.pathname.startsWith('/admin')) {
         setCurrentView('admin');
       } else {
         setCurrentView('portfolio');
@@ -74,7 +77,8 @@ export default function App() {
   // Navigation handler
   const handleNavigate = (view: 'portfolio' | 'admin', sectionId?: string) => {
     if (view === 'admin') {
-      window.history.pushState({}, '', '/admin');
+      const targetUrl = isAdminLoggedIn ? '/admin/dashboard' : '/admin';
+      window.history.pushState({}, '', targetUrl);
       setCurrentView('admin');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
@@ -101,10 +105,8 @@ export default function App() {
   const handleLogout = async () => {
     await adminLogout();
     setIsAdminLoggedIn(false);
+    window.history.pushState({}, '', '/admin');
     loadArtworks();
-    if (currentView === 'admin') {
-      handleNavigate('portfolio', 'home');
-    }
   };
 
   return (

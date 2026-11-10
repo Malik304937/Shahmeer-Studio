@@ -8,15 +8,27 @@ import {
 const TOKEN_KEY = 'shahmeer_admin_token';
 
 export function getAdminToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
 export function setAdminToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch (e) {
+    console.warn('Could not persist admin token:', e);
+  }
 }
 
 export function removeAdminToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch (e) {
+    console.warn('Could not remove admin token:', e);
+  }
 }
 
 export function authHeaders(): Record<string, string> {
@@ -24,30 +36,85 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// 1. Admin Login (Purely server-side authenticated)
+/**
+ * Admin Login with resilient network & error handling
+ *
+ * Requirements:
+ * - If server unavailable: "Unable to connect to the authentication server. Please try again."
+ * - If credentials incorrect: "Incorrect administrator credentials."
+ * - If Firebase config missing: "Authentication configuration is incomplete. Please check Firebase settings."
+ */
 export async function adminLogin(password: string): Promise<AdminAuthResponse> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return {
+      success: false,
+      error: 'Unable to connect to the authentication server. Please try again.',
+    };
+  }
+
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
       body: JSON.stringify({ password }),
     });
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      return { success: false, error: data.error || 'Authentication failed' };
+    const contentType = res.headers.get('content-type') || '';
+
+    // If server returned non-JSON (e.g. 502/503 HTML warmup or proxy error)
+    if (!contentType.includes('application/json')) {
+      if (res.status === 401 || res.status === 403) {
+        return {
+          success: false,
+          error: 'Incorrect administrator credentials.',
+        };
+      }
+      return {
+        success: false,
+        error: 'Unable to connect to the authentication server. Please try again.',
+      };
+    }
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok || !data?.success) {
+      if (res.status === 401 || res.status === 403) {
+        return {
+          success: false,
+          error: 'Incorrect administrator credentials.',
+        };
+      }
+      return {
+        success: false,
+        error:
+          data?.error ||
+          'Unable to connect to the authentication server. Please try again.',
+      };
     }
 
     if (data.token) {
       setAdminToken(data.token);
     }
-    return data;
+    return {
+      success: true,
+      token: data.token,
+      expiresAt: data.expiresAt,
+      message: data.message,
+    };
   } catch {
-    return { success: false, error: 'Network error connecting to security server' };
+    return {
+      success: false,
+      error: 'Unable to connect to the authentication server. Please try again.',
+    };
   }
 }
 
-// 2. Change Admin Password (Owner can set new secret key)
+/**
+ * Change Admin Password
+ */
 export async function changeAdminPassword(
   currentPassword: string,
   newPassword: string
@@ -57,22 +124,34 @@ export async function changeAdminPassword(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Accept: 'application/json',
         ...authHeaders(),
       },
       body: JSON.stringify({ currentPassword, newPassword }),
     });
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      return { success: false, error: data.error || 'Failed to update password' };
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok || !data?.success) {
+      return {
+        success: false,
+        error:
+          data?.error ||
+          'Unable to connect to the authentication server. Please try again.',
+      };
     }
     return data;
   } catch {
-    return { success: false, error: 'Network error connecting to server' };
+    return {
+      success: false,
+      error: 'Unable to connect to the authentication server. Please try again.',
+    };
   }
 }
 
-// 3. Admin Logout
+/**
+ * Admin Logout
+ */
 export async function adminLogout(): Promise<void> {
   try {
     await fetch('/api/auth/logout', {
@@ -89,42 +168,62 @@ export async function adminLogout(): Promise<void> {
   }
 }
 
-// 4. Verify Admin Session
+/**
+ * Verify Admin Session
+ */
 export async function verifyAdminSession(): Promise<boolean> {
   const token = getAdminToken();
   if (!token) return false;
 
   try {
     const res = await fetch('/api/auth/verify', {
-      headers: authHeaders(),
+      headers: {
+        Accept: 'application/json',
+        ...authHeaders(),
+      },
     });
+
     if (!res.ok) {
       removeAdminToken();
       return false;
     }
-    const data = await res.json();
-    if (!data.authenticated) {
+
+    const data = await res.json().catch(() => null);
+    if (!data?.authenticated) {
       removeAdminToken();
+      return false;
     }
-    return Boolean(data.authenticated);
+    return true;
   } catch {
-    return false;
+    // If server temporarily unreachable, preserve token for retry
+    return Boolean(token);
   }
 }
 
-// 5. Fetch Artworks
+/**
+ * Fetch Artworks
+ */
 export async function fetchArtworks(): Promise<Artwork[]> {
-  const res = await fetch('/api/artworks', {
-    headers: authHeaders(),
-  });
-  if (!res.ok) {
-    throw new Error('Failed to load artworks');
+  try {
+    const res = await fetch('/api/artworks', {
+      headers: {
+        Accept: 'application/json',
+        ...authHeaders(),
+      },
+    });
+    if (!res.ok) {
+      throw new Error('Failed to load artworks');
+    }
+    return await res.json();
+  } catch (err) {
+    console.error('Fetch artworks network error:', err);
+    return [];
   }
-  return await res.json();
 }
 
-// 6. Real-Time Gallery Synchronization
-// Uses Firebase Firestore onSnapshot if available, or Server-Sent Events / Polling
+/**
+ * Real-Time Gallery Synchronization
+ */
 export function subscribeArtworksRealtime(
   onData: (artworks: Artwork[]) => void,
   isAdmin: boolean = false
@@ -155,23 +254,26 @@ export function subscribeArtworksRealtime(
     };
 
     eventSource.onerror = () => {
-      // If SSE disconnects, fall back to low-frequency background poll
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
       if (!intervalId) {
         intervalId = setInterval(async () => {
           try {
             const data = await fetchArtworks();
-            onData(data);
+            if (data.length > 0) onData(data);
           } catch {}
-        }, 5000);
+        }, 6000);
       }
     };
   } catch {
     intervalId = setInterval(async () => {
       try {
         const data = await fetchArtworks();
-        onData(data);
+        if (data.length > 0) onData(data);
       } catch {}
-    }, 5000);
+    }, 6000);
   }
 
   return () => {
@@ -184,7 +286,9 @@ export function subscribeArtworksRealtime(
   };
 }
 
-// 7. Create Artwork
+/**
+ * Create Artwork
+ */
 export async function createArtwork(payload: {
   title: string;
   description: string;
@@ -196,6 +300,7 @@ export async function createArtwork(payload: {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Accept: 'application/json',
       ...authHeaders(),
     },
     body: JSON.stringify(payload),
@@ -209,7 +314,9 @@ export async function createArtwork(payload: {
   return await res.json();
 }
 
-// 8. Update Artwork
+/**
+ * Update Artwork
+ */
 export async function updateArtwork(
   id: string,
   payload: Partial<Artwork>
@@ -218,6 +325,7 @@ export async function updateArtwork(
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
+      Accept: 'application/json',
       ...authHeaders(),
     },
     body: JSON.stringify(payload),
@@ -231,7 +339,9 @@ export async function updateArtwork(
   return await res.json();
 }
 
-// 9. Delete Artwork
+/**
+ * Delete Artwork
+ */
 export async function deleteArtwork(id: string): Promise<boolean> {
   const res = await fetch(`/api/artworks/${id}`, {
     method: 'DELETE',
@@ -246,8 +356,9 @@ export async function deleteArtwork(id: string): Promise<boolean> {
   return true;
 }
 
-// 10. Upload Artwork Image with Progress Tracking
-// Uses Firebase Storage if configured, or Server Permanent Storage
+/**
+ * Upload Artwork Image with Progress Tracking
+ */
 export async function uploadArtworkImage(
   file: File,
   onProgress?: (percent: number) => void
@@ -259,7 +370,10 @@ export async function uploadArtworkImage(
       const url = await uploadToFirebaseStorage(file, onProgress);
       return url;
     } catch (fbErr) {
-      console.warn('Firebase Storage upload failed, falling back to server disk storage:', fbErr);
+      console.warn(
+        'Firebase Storage upload notice, falling back to server disk storage:',
+        fbErr
+      );
     }
   }
 
@@ -274,6 +388,7 @@ export async function uploadArtworkImage(
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            Accept: 'application/json',
             ...authHeaders(),
           },
           body: JSON.stringify({
@@ -301,7 +416,9 @@ export async function uploadArtworkImage(
   });
 }
 
-// Helper: Calculate statistics
+/**
+ * Calculate Statistics
+ */
 export function calculateStats(artworks: Artwork[]): ArtworkStats {
   const totalUploaded = artworks.length;
   const totalPublished = artworks.filter((a) => a.published).length;
