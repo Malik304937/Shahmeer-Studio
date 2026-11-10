@@ -16,7 +16,13 @@ const PORT = 3000;
 
 // Global CORS & preflight middleware for iframes and preview domains
 app.use((req: Request, res: Response, next: NextFunction) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
